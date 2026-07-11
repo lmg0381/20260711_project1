@@ -122,6 +122,7 @@
   }
   .history-box b { color: #a8600a; }
   .tier-tag { color: #c0791a; font-weight: 700; }
+  .tier-round { color: #a9b1bd; }
 
   button.draw {
     display: block; width: 100%;
@@ -496,12 +497,20 @@
         `<span class="plus">+</span>` +
         `<span class="ball mid locked bonus-ball" style="background:${ballColor(game.bonus)}">${game.bonus}</span>`;
       const hb = bestHistory(game.six);
-      const tierTxt = hb.best ? TIER_NAME[hb.best] : '없음';
+      let tierHTML;
+      if (hb.best) {
+        const latest = hb.rounds[hb.rounds.length - 1];
+        const more = hb.rounds.length > 1 ? ` 외 ${hb.rounds.length - 1}회` : '';
+        tierHTML = `<span class="tier-tag">역대최고 ${TIER_NAME[hb.best]}</span>` +
+                   ` <span class="tier-round">${latest.r}회(${latest.d})${more}</span>`;
+      } else {
+        tierHTML = `<span class="tier-tag">역대최고 없음</span>`;
+      }
       return `<div class="game-row">
           <div class="game-label">${String.fromCharCode(65 + g)}</div>
           <div class="balls">${balls}</div>
           <div class="game-meta">번호합 ${sum} · 홀 ${odd}:짝 ${6 - odd} · 저 ${low}:고 ${6 - low}` +
-        ` · <span class="tier-tag">역대최고 ${tierTxt}</span></div>
+        ` · ${tierHTML}</div>
         </div>`;
     }).join('');
   }
