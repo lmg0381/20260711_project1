@@ -63,6 +63,15 @@
   .opt.active { border-color: #2a5298; background: #2a5298; color: #fff; }
   .opt small { display: block; font-weight: 400; font-size: 10px; opacity: 0.85; margin-top: 2px; }
 
+  .anchor-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .anchor-check { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: #556; }
+  .anchor-row input[type=number] { width: 66px; padding: 7px 8px; border: 1px solid #d6deea; border-radius: 8px; text-align: center; font-size: 13px; }
+  .anchor-row button { padding: 7px 12px; border: 1px solid #cdd9ea; background: #f2f6fc; border-radius: 8px; font-size: 12px; font-weight: 600; color: #2a5298; cursor: pointer; }
+  .anchor-row input:disabled, .anchor-row button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .anchor-note { margin-top: 8px; font-size: 11px; line-height: 1.7; color: #97a0ad; }
+  .anchor-note b { color: #6b7787; }
+  .ball.anchor-ball { box-shadow: 0 0 0 3px #2a5298, inset -3px -3px 6px rgba(0,0,0,0.2), 0 3px 6px rgba(0,0,0,0.2); }
+
   .count-custom { margin-top: 9px; font-size: 12px; color: #889; display: flex; align-items: center; gap: 6px; }
   .count-custom input {
     width: 64px; padding: 6px 8px; border: 1px solid #d6deea; border-radius: 8px;
@@ -190,6 +199,18 @@
       <div class="opt active" data-mode="hot">🔥 핫넘버<small>자주 나온 번호</small></div>
       <div class="opt" data-mode="cold">❄️ 콜드넘버<small>안 나온 번호</small></div>
       <div class="opt" data-mode="balanced">⚖️ 균형<small>빈도 비례</small></div>
+    </div>
+
+    <div class="section-title">🎯 축(고정) 번호 <span style="font-weight:400;font-size:11px;color:#aab;">— 선택사항</span></div>
+    <div class="anchor-row">
+      <label class="anchor-check"><input type="checkbox" id="anchorOn"> 한 숫자를 고정해서 뽑기</label>
+      <input type="number" id="anchorNum" min="1" max="45" placeholder="번호" disabled>
+      <button type="button" id="anchorRand" disabled>🎲 랜덤</button>
+    </div>
+    <div class="anchor-note">
+      ※ 번호를 고정해도 <b>1등 확률 자체는 오르지 않습니다</b>(모든 조합은 확률이 같아요).
+      다만 고정한 번호가 실제 당첨되면 그 번호가 들어간 여러 게임이 한꺼번에 덕을 보는
+      <b>축(pivot) 베팅</b> 방식입니다. 확률을 실제로 높이는 유일한 방법은 서로 다른 조합을 더 많이 사는 것(게임 수 ↑)뿐이에요.
     </div>
 
     <div class="summary-line" id="summary">데이터 로딩 중…</div>
@@ -354,10 +375,20 @@
     return [...new Set((str || '').split(/[^0-9]+/).map(x => parseInt(x, 10)).filter(n => n >= 1 && n <= 45))];
   }
 
+  // 축(고정) 번호: 켜져 있고 유효하면 1~45 반환, 아니면 null
+  function getAnchor() {
+    const on = document.getElementById('anchorOn').checked;
+    const n = parseInt(document.getElementById('anchorNum').value, 10);
+    return (on && n >= 1 && n <= 45) ? n : null;
+  }
+
   function currentOptions() {
-    let fixed = parseNums(document.getElementById('fixedInput').value).slice(0, 5);
+    let fixed = parseNums(document.getElementById('fixedInput').value);
+    const anchor = getAnchor();
+    if (anchor !== null) fixed.unshift(anchor);       // 축 번호를 최우선 고정
+    fixed = [...new Set(fixed)].slice(0, 5);
     const exSet = new Set(parseNums(document.getElementById('excludeInput').value));
-    fixed = fixed.filter(n => !exSet.has(n)); // 충돌 시 고정 우선
+    fixed = fixed.filter(n => !exSet.has(n));          // 충돌 시 고정 우선
     return { fixed, excluded: exSet, noConsec: document.getElementById('noConsecutive').checked };
   }
 
@@ -472,9 +503,9 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   // 1게임: 무대에 크게 + 역대 성적
-  function featuredHTML(game) {
+  function featuredHTML(game, anchor) {
     const balls = game.six
-        .map(n => `<span class="ball big locked" style="background:${ballColor(n)}">${n}</span>`).join('') +
+        .map(n => `<span class="ball big locked${n === anchor ? ' anchor-ball' : ''}" style="background:${ballColor(n)}">${n}</span>`).join('') +
       `<span class="plus">+</span>` +
       `<span class="slot-wrap"><span class="ball big locked bonus-ball" style="background:${ballColor(game.bonus)}">${game.bonus}</span><span class="bonus-cap">보너스</span></span>`;
     const sum = game.six.reduce((a, b) => a + b, 0);
@@ -487,13 +518,13 @@
   }
 
   // 여러 게임: 리스트
-  function listHTML(results) {
+  function listHTML(results, anchor) {
     return results.map((game, g) => {
       const sum = game.six.reduce((a, b) => a + b, 0);
       const odd = game.six.filter(n => n % 2).length;
       const low = game.six.filter(n => n <= 22).length;
       const balls = game.six.map((n, i) =>
-        `<span class="ball mid locked" style="background:${ballColor(n)};animation-delay:${i * 0.04}s">${n}</span>`).join('') +
+        `<span class="ball mid locked${n === anchor ? ' anchor-ball' : ''}" style="background:${ballColor(n)};animation-delay:${i * 0.04}s">${n}</span>`).join('') +
         `<span class="plus">+</span>` +
         `<span class="ball mid locked bonus-ball" style="background:${ballColor(game.bonus)}">${game.bonus}</span>`;
       const hb = bestHistory(game.six);
@@ -547,13 +578,14 @@
     await sleep(650);
 
     // 결과 한 번에 표시
+    const anchor = getAnchor();
     if (results.length === 1) {
-      stage.innerHTML = featuredHTML(results[0]);
+      stage.innerHTML = featuredHTML(results[0], anchor);
     } else {
       stage.innerHTML =
         `<div class="machine">🎉 ${results.length}게임 추천 완료!</div>` +
-        `<div class="feat-meta">아래에서 확인하세요 ↓</div>`;
-      gamesEl.innerHTML = listHTML(results);
+        `<div class="feat-meta">${anchor !== null ? `축 번호 <b>${anchor}</b> 고정 · ` : ''}아래에서 확인하세요 ↓</div>`;
+      gamesEl.innerHTML = listHTML(results, anchor);
     }
     ding(); fanfare();
 
@@ -575,6 +607,16 @@
     document.querySelectorAll('#modeGroup .opt').forEach(o => o.classList.remove('active'));
     opt.classList.add('active');
     selectedMode = opt.dataset.mode;
+  });
+  document.getElementById('anchorOn').addEventListener('change', e => {
+    const on = e.target.checked;
+    const num = document.getElementById('anchorNum');
+    const rnd = document.getElementById('anchorRand');
+    num.disabled = !on; rnd.disabled = !on;
+    if (on && !num.value) num.value = 1 + Math.floor(Math.random() * 45);
+  });
+  document.getElementById('anchorRand').addEventListener('click', () => {
+    document.getElementById('anchorNum').value = 1 + Math.floor(Math.random() * 45);
   });
   document.getElementById('countGroup').addEventListener('click', e => {
     const opt = e.target.closest('.opt'); if (!opt) return;
