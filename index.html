@@ -721,20 +721,64 @@
     return w;
   }
 
-  const chat = { started: false, date: null, hour: -1, reroll: 0 };
+  const chat = { started: false, date: null, hour: -1, reroll: 0, history: [] };
   const chatMsgs = () => document.getElementById('chatMsgs');
-  function addMsg(text, who, extraHTML) {
+  function addMsg(html, who, extraHTML) {
     const d = document.createElement('div');
     d.className = 'msg ' + who;
-    d.innerHTML = text + (extraHTML || '');
+    d.innerHTML = html + (extraHTML || '');
     chatMsgs().appendChild(d);
     chatMsgs().scrollTop = chatMsgs().scrollHeight;
+    return d;
   }
   function setChatInput(html) { document.getElementById('chatInput').innerHTML = html; }
   function cBall(n, lucky) { return `<span class="ball small locked${lucky ? ' anchor-ball' : ''}" style="background:${ballColor(n)}">${n}</span>`; }
+  function escHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+  // /api/chat (Vercel 서버리스 함수) 호출 → GPT 응답
+  async function callGPT(context) {
+    const res = await fetch('/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: chat.history, context })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    return data.reply;
+  }
+
+  // 생일 기반 추천 조합 생성(그라운딩용 — GPT엔 이 숫자만 전달)
+  function makeRecommendation() {
+    const lucky = luckyNumbers(chat.date, chat.hour);
+    const seed = (birthSeed(chat.date, chat.hour) + chat.reroll * 0x9E3779B1) >>> 0;
+    const g = drawGame(personalWeights(buildWeights(stats, selectedMode), lucky), currentOptions(), mulberry32(seed));
+    if (!g) return null;
+    const hb = bestHistory(g.six);
+    return { six: g.six, bonus: g.bonus, lucky, bestTier: hb.best ? TIER_NAME[hb.best] : '없음' };
+  }
+  function buildContext(rec) {
+    return {
+      date: chat.date, hour: chat.hour >= 0 ? chat.hour : null,
+      lucky: rec ? rec.lucky : luckyNumbers(chat.date, chat.hour),
+      strategy: selectedMode, range: selectedRange,
+      latestDraw: { round: stats.lastDraw.r, numbers: stats.lastDraw.n, bonus: stats.lastDraw.b },
+      recommendation: rec ? { six: rec.six, bonus: rec.bonus, bestTier: rec.bestTier } : null
+    };
+  }
+  // GPT 텍스트 + (있으면) 번호 볼을 함께 렌더
+  function renderReply(text, rec, fallback) {
+    let extra = '';
+    if (rec) {
+      const balls = rec.six.map(n => cBall(n, rec.lucky.includes(n))).join('') +
+        `<span class="plus" style="font-size:13px;">+</span>` +
+        `<span class="ball small locked bonus-ball" style="background:${ballColor(rec.bonus)}">${rec.bonus}</span>`;
+      extra = `<div class="mini-balls">${balls}</div>` +
+        `<div style="font-size:11px;color:#99a;margin-top:6px;">역대최고 ${rec.bestTier} · 파란 테두리 = 행운수</div>`;
+    }
+    addMsg(escHtml(text) + (fallback ? `\n<span style="font-size:10px;color:#c39;">※ AI 서버 미연결 — 기본 안내로 대체</span>` : ''), 'bot', extra);
+  }
 
   function chatStart() {
-    addMsg('안녕하세요! 🔮\n생년월일과 태어난 시간을 알려주시면, 사주 기운에서 뽑은 행운수를 과거 당첨 통계와 함께 버무려 번호를 추천해드려요.\n(운세는 재미로만 즐겨주세요 😊 당첨 확률과는 무관해요.)', 'bot');
+    addMsg('안녕하세요! 🔮\n생년월일과 태어난 시간을 알려주시면, 사주 기운과 과거 당첨 통계를 함께 풀어 행운번호를 추천해드려요.\n(운세는 재미로만 즐겨주세요 😊 당첨 확률과는 무관해요.)', 'bot');
     askDate();
   }
   function askDate() {
@@ -743,9 +787,7 @@
     document.getElementById('cDateOk').onclick = () => {
       const v = document.getElementById('cDate').value;
       if (!v) { document.getElementById('cDate').focus(); return; }
-      chat.date = v;
-      addMsg(v.replace(/-/g, '. '), 'user');
-      askTime();
+      chat.date = v; addMsg(v.replace(/-/g, '. '), 'user'); askTime();
     };
   }
   function askTime() {
@@ -757,43 +799,71 @@
       const h = parseInt(document.getElementById('cTime').value, 10);
       chat.hour = (h >= 0 && h <= 23) ? h : -1;
       addMsg(chat.hour >= 0 ? `${String(chat.hour).padStart(2, '0')}시` : '모름', 'user');
-      analyze();
+      reading(true);
     };
-    document.getElementById('cTimeUnknown').onclick = () => { chat.hour = -1; addMsg('모름', 'user'); analyze(); };
+    document.getElementById('cTimeUnknown').onclick = () => { chat.hour = -1; addMsg('모름', 'user'); reading(true); };
   }
-  function analyze() {
-    chat.reroll = 0;
-    addMsg('기운을 읽는 중이에요… 🔮✨', 'bot');
-    setChatInput('');
-    setTimeout(() => doResult(true), 750);
-  }
-  function doResult(first) {
+
+  // 생일/시간 확보 후 첫 리딩
+  async function reading(first) {
     if (!stats) return;
-    const seed = (birthSeed(chat.date, chat.hour) + chat.reroll * 0x9E3779B1) >>> 0;
-    const rng = mulberry32(seed);
-    const lucky = luckyNumbers(chat.date, chat.hour);
-    const w = personalWeights(buildWeights(stats, selectedMode), lucky);
-    const g = drawGame(w, currentOptions(), rng);
-    if (!g) { addMsg('앗, 고급 옵션의 제외수가 너무 많아요. 조건을 줄이고 다시 시도해주세요.', 'bot'); return; }
-    const gameBalls = g.six.map(n => cBall(n, lucky.includes(n))).join('') +
-      `<span class="plus" style="font-size:13px;">+</span>` +
-      `<span class="ball small locked bonus-ball" style="background:${ballColor(g.bonus)}">${g.bonus}</span>`;
-    const hb = bestHistory(g.six);
-    const hist = hb.best ? `역대최고 ${TIER_NAME[hb.best]} · ${hb.rounds[hb.rounds.length - 1].r}회` : '역대최고 없음';
-    const head = first
-      ? `분석 완료! ✨\n당신의 행운수는 <b>${lucky.join(', ')}</b> 예요.\n이 기운과 최근 통계를 섞은 추천 조합입니다:`
-      : `새로 뽑은 조합이에요:`;
-    addMsg(head, 'bot',
-      `<div class="mini-balls">${gameBalls}</div>` +
-      `<div style="font-size:11px;color:#99a;margin-top:6px;">${hist} · 파란 테두리 = 행운수</div>`);
-    setChatInput('<button id="cMore">🎲 다른 조합</button><button class="alt" id="cRestart">처음부터</button>');
-    document.getElementById('cMore').onclick = () => { chat.reroll++; doResult(false); };
-    document.getElementById('cRestart').onclick = () => { chat.date = null; chat.hour = -1; askDate(); };
+    if (first) { chat.reroll = 0; chat.history = []; }
+    const rec = makeRecommendation();
+    if (!rec) { addMsg('앗, 고급 옵션의 제외수가 너무 많아요. 조건을 줄이고 다시 시도해주세요.', 'bot'); enableFreeChat(); return; }
+    setChatInput('');
+    const typing = addMsg('<span style="letter-spacing:2px;">●●●</span>', 'bot');
+    chat.history.push({
+      role: 'user',
+      content: first
+        ? '내 생년월일과 태어난 시간에 맞춰 로또 행운번호를 추천하고, 사주 관점에서 왜 이 번호인지 따뜻하게 설명해줘.'
+        : '방금과 다른 번호로 하나 더 추천해줘.'
+    });
+    try {
+      const reply = await callGPT(buildContext(rec));
+      chat.history.push({ role: 'assistant', content: reply });
+      typing.remove();
+      renderReply(reply, rec);
+    } catch (e) {
+      typing.remove();
+      chat.history.push({ role: 'assistant', content: '(로컬 폴백)' });
+      renderReply(`당신의 행운수는 ${rec.lucky.join(', ')} 이에요. 이 기운과 최근 통계를 섞어 번호를 골랐어요!`, rec, true);
+    }
+    enableFreeChat();
+  }
+
+  // 자유 대화 입력창
+  function enableFreeChat() {
+    setChatInput('<input type="text" id="cText" placeholder="메시지 입력 (예: 다른 번호 추천해줘)" autocomplete="off"><button id="cSend">전송</button><button class="alt" id="cRestart2">처음부터</button>');
+    const input = document.getElementById('cText');
+    const send = document.getElementById('cSend');
+    document.getElementById('cRestart2').onclick = () => { chat.date = null; chat.hour = -1; chat.history = []; askDate(); };
+    const go = async () => {
+      const t = input.value.trim(); if (!t) return;
+      input.value = ''; addMsg(escHtml(t), 'user');
+      const wantNumbers = /번호|추천|뽑|다른|새로|하나\s*더|다시|바꿔|another|more|number/i.test(t);
+      if (wantNumbers) chat.reroll++;
+      const rec = wantNumbers ? makeRecommendation() : null;
+      chat.history.push({ role: 'user', content: t });
+      const typing = addMsg('<span style="letter-spacing:2px;">●●●</span>', 'bot');
+      try {
+        const reply = await callGPT(buildContext(rec));
+        chat.history.push({ role: 'assistant', content: reply });
+        typing.remove();
+        renderReply(reply, rec);
+      } catch (e) {
+        typing.remove();
+        renderReply(wantNumbers && rec
+          ? `새 조합이에요! 행운수 ${rec.lucky.join(', ')} 기운을 담았어요.`
+          : 'AI 서버에 연결되지 않았어요. Vercel 배포 + OPENAI_API_KEY 설정 후 이용해 주세요. 🙏', rec, true);
+      }
+    };
+    send.onclick = go;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    input.focus();
   }
 
   document.getElementById('chatFab').addEventListener('click', () => {
-    const win = document.getElementById('chatWin');
-    win.hidden = false;
+    document.getElementById('chatWin').hidden = false;
     document.getElementById('chatFab').style.display = 'none';
     if (!chat.started) { chat.started = true; chatStart(); }
   });
