@@ -39,6 +39,43 @@
 > ⚠️ 로컬(`file://`)이나 키 미설정 시에는 `/api/chat`가 없거나 오류이므로,
 > 챗봇은 자동으로 로컬 기본 안내로 폴백합니다.
 > `OPENAI_MODEL`은 본인 계정에서 실제 지원되는 모델 ID로 맞춰 주세요.
+
+## 추천 결과 저장 — Supabase
+
+챗봇이 번호를 추천할 때마다 결과가 **서버리스 함수 `api/save-reading.js`**를 통해
+Supabase에 저장됩니다(키는 서버에서만 사용, 클라이언트 미노출).
+
+**1) Supabase 테이블 생성** — SQL 편집기에서 실행:
+
+```sql
+create table if not exists public.saju_recommendations (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  birth_date date,
+  birth_hour int,
+  lucky_numbers int[] not null default '{}',
+  numbers int[] not null default '{}',
+  bonus int,
+  best_tier text,
+  strategy text,
+  data_range text
+);
+alter table public.saju_recommendations enable row level security;
+-- service_role 키는 RLS를 우회하므로 별도 정책 없이도 서버에서 INSERT 됩니다.
+```
+
+**2) Vercel 환경변수 추가** (Settings → Environment Variables):
+
+| 이름 | 값 | 필수 |
+|------|-----|------|
+| `SUPABASE_URL` | Supabase Project URL (`https://xxxx.supabase.co`) | ✅ |
+| `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API → **service_role** 시크릿 | ✅ |
+
+**3) Redeploy** 하면 저장이 활성화됩니다.
+
+> 🔒 `service_role` 키는 관리자 권한이라 절대 클라이언트/깃에 노출하지 마세요(환경변수에만).
+> 저장 실패는 조용히 무시되어 챗봇 사용에는 영향이 없습니다.
+> 생년월일·시간은 개인정보이므로, 실제 서비스라면 이용자에게 수집 안내를 제공하세요.
 - **상세 통계**: 번호별 출현 빈도 차트, 평균 번호합/홀짝 등 (접이식)
 
 ## 사용법
@@ -53,6 +90,7 @@ Vercel 등에 배포하면 루트 주소(`/`)에서 바로 열립니다.
 | `index.html` | 분석 로직 + UI + 챗봇 (메인) |
 | `lotto_data.js` | 로또 전체 당첨 결과 데이터 |
 | `api/chat.js` | GPT 프록시 서버리스 함수 (Vercel) |
+| `api/save-reading.js` | 추천 결과를 Supabase에 저장하는 서버리스 함수 |
 
 ## 데이터 출처
 
