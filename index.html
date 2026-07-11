@@ -166,6 +166,39 @@
   }
   .adv-field .hint { font-size: 10px; color: #aab; margin-top: 4px; }
   .adv-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #556; }
+
+  /* ---- 행운번호 챗봇 ---- */
+  #chatFab {
+    position: fixed; right: 20px; bottom: 20px; width: 58px; height: 58px;
+    border-radius: 50%; border: none; cursor: pointer; z-index: 1000; font-size: 26px;
+    background: linear-gradient(135deg, #7b5cff, #5a8dff); color: #fff;
+    box-shadow: 0 8px 22px rgba(90, 80, 200, 0.45); transition: transform 0.15s;
+  }
+  #chatFab:hover { transform: scale(1.08); }
+  .chat-win {
+    position: fixed; right: 20px; bottom: 88px; z-index: 1000;
+    width: 344px; max-width: calc(100vw - 32px);
+    height: 540px; max-height: calc(100vh - 120px);
+    background: #fff; border-radius: 18px; overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+    display: flex; flex-direction: column;
+  }
+  .chat-win[hidden] { display: none; }
+  .chat-head {
+    background: linear-gradient(135deg, #7b5cff, #5a8dff); color: #fff;
+    padding: 13px 15px; font-weight: 700; font-size: 14px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .chat-head button { background: transparent; border: none; color: #fff; font-size: 17px; cursor: pointer; }
+  .chat-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #f5f7fb; }
+  .msg { max-width: 84%; padding: 9px 12px; border-radius: 14px; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+  .msg.bot { background: #fff; border: 1px solid #e6ebf2; align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg.user { background: #5a8dff; color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg .mini-balls { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .chat-input { padding: 10px; border-top: 1px solid #eef1f6; display: flex; flex-wrap: wrap; gap: 7px; align-items: center; background: #fff; }
+  .chat-input input, .chat-input select { flex: 1; min-width: 96px; padding: 8px 10px; border: 1px solid #d6deea; border-radius: 9px; font-size: 13px; }
+  .chat-input button { padding: 8px 14px; border: none; border-radius: 9px; background: #5a8dff; color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .chat-input button.alt { background: #eef2f7; color: #556; }
 </style>
 </head>
 <body>
@@ -266,6 +299,17 @@
         </div>
       </div>
     </details>
+  </div>
+
+  <!-- 행운번호 챗봇 -->
+  <button id="chatFab" title="행운번호 챗봇">🔮</button>
+  <div class="chat-win" id="chatWin" hidden>
+    <div class="chat-head">
+      <span>🔮 행운번호 챗봇</span>
+      <button id="chatClose" title="닫기">✕</button>
+    </div>
+    <div class="chat-msgs" id="chatMsgs"></div>
+    <div class="chat-input" id="chatInput"></div>
   </div>
 
 <script src="lotto_data.js"></script>
@@ -393,7 +437,9 @@
   }
 
   // 가중 랜덤으로 한 게임(6개 + 보너스) 생성 — 고정/제외/패턴 반영
-  function drawGame(weights, opts) {
+  // rng: 0~1 난수 함수(생략 시 Math.random). 챗봇의 시드 난수를 넣으면 재현 가능.
+  function drawGame(weights, opts, rng) {
+    const rand = rng || Math.random;
     const fixed = opts.fixed || [], excluded = opts.excluded || new Set();
     const w = weights.slice();
     let six = null;
@@ -405,7 +451,7 @@
       while (picked.length < 6) {
         let total = 0; for (const n of pool) total += w[n];
         if (total <= 0) { ok = false; break; }
-        let r = Math.random() * total, chosen = pool[pool.length - 1];
+        let r = rand() * total, chosen = pool[pool.length - 1];
         for (const n of pool) { r -= w[n]; if (r <= 0) { chosen = n; break; } }
         picked.push(chosen); pool.splice(pool.indexOf(chosen), 1);
       }
@@ -419,7 +465,7 @@
     const rem = [];
     for (let n = 1; n <= 45; n++) if (!six.includes(n) && !excluded.has(n)) rem.push(n);
     let total = 0; for (const n of rem) total += w[n];
-    let r = Math.random() * total, bonus = rem[rem.length - 1];
+    let r = rand() * total, bonus = rem[rem.length - 1];
     for (const n of rem) { r -= w[n]; if (r <= 0) { bonus = n; break; } }
     return { six, bonus };
   }
@@ -636,6 +682,124 @@
   document.getElementById('muteBtn').addEventListener('click', () => {
     soundOn = !soundOn;
     document.getElementById('muteBtn').textContent = soundOn ? '🔊' : '🔇';
+  });
+
+  // ===================== 행운번호 챗봇 =====================
+  // 시드 기반 난수(Mulberry32) — 같은 시드 → 같은 결과
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  // 생년월일 + 시간 → 32bit 시드
+  function birthSeed(dateStr, hour) {
+    const digits = (dateStr || '').replace(/\D/g, '');
+    let seed = 2166136261;
+    for (const ch of digits) { seed ^= ch.charCodeAt(0); seed = Math.imul(seed, 16777619); }
+    seed = (seed + (hour >= 0 ? (hour + 1) * 2654435761 : 917521)) >>> 0;
+    return seed >>> 0;
+  }
+  // 생일 숫자에서 뽑은 "행운수"(1~45)
+  function luckyNumbers(dateStr, hour) {
+    const [y, m, d] = (dateStr || '0-0-0').split('-').map(Number);
+    const set = new Set();
+    const push = v => { let n = ((Math.abs(v) - 1) % 45) + 1; set.add(n); };
+    if (m) push(m);                                   // 월
+    if (d) push(d);                                   // 일
+    if (y) push(String(y).split('').reduce((a, c) => a + (+c), 0)); // 연도 자릿수 합
+    if (y && m && d) push(y + m + d);                 // 전체 합
+    if (hour >= 0) push(hour === 0 ? 24 : hour * 2);  // 시
+    return [...set];
+  }
+  // 행운수에 가중치 부여
+  function personalWeights(base, lucky) {
+    const w = base.slice();
+    for (const n of lucky) w[n] *= 2.4;
+    return w;
+  }
+
+  const chat = { started: false, date: null, hour: -1, reroll: 0 };
+  const chatMsgs = () => document.getElementById('chatMsgs');
+  function addMsg(text, who, extraHTML) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + who;
+    d.innerHTML = text + (extraHTML || '');
+    chatMsgs().appendChild(d);
+    chatMsgs().scrollTop = chatMsgs().scrollHeight;
+  }
+  function setChatInput(html) { document.getElementById('chatInput').innerHTML = html; }
+  function cBall(n, lucky) { return `<span class="ball small locked${lucky ? ' anchor-ball' : ''}" style="background:${ballColor(n)}">${n}</span>`; }
+
+  function chatStart() {
+    addMsg('안녕하세요! 🔮\n생년월일과 태어난 시간을 알려주시면, 사주 기운에서 뽑은 행운수를 과거 당첨 통계와 함께 버무려 번호를 추천해드려요.\n(운세는 재미로만 즐겨주세요 😊 당첨 확률과는 무관해요.)', 'bot');
+    askDate();
+  }
+  function askDate() {
+    addMsg('먼저, 생년월일을 알려주세요.', 'bot');
+    setChatInput('<input type="date" id="cDate"><button id="cDateOk">확인</button>');
+    document.getElementById('cDateOk').onclick = () => {
+      const v = document.getElementById('cDate').value;
+      if (!v) { document.getElementById('cDate').focus(); return; }
+      chat.date = v;
+      addMsg(v.replace(/-/g, '. '), 'user');
+      askTime();
+    };
+  }
+  function askTime() {
+    addMsg('태어난 시간도 알려주시면 더 정교해요. 모르면 "모름"을 눌러주세요.', 'bot');
+    let opts = '<option value="-1">시간 선택</option>';
+    for (let h = 0; h < 24; h++) opts += `<option value="${h}">${String(h).padStart(2, '0')}시</option>`;
+    setChatInput(`<select id="cTime">${opts}</select><button id="cTimeOk">확인</button><button class="alt" id="cTimeUnknown">모름</button>`);
+    document.getElementById('cTimeOk').onclick = () => {
+      const h = parseInt(document.getElementById('cTime').value, 10);
+      chat.hour = (h >= 0 && h <= 23) ? h : -1;
+      addMsg(chat.hour >= 0 ? `${String(chat.hour).padStart(2, '0')}시` : '모름', 'user');
+      analyze();
+    };
+    document.getElementById('cTimeUnknown').onclick = () => { chat.hour = -1; addMsg('모름', 'user'); analyze(); };
+  }
+  function analyze() {
+    chat.reroll = 0;
+    addMsg('기운을 읽는 중이에요… 🔮✨', 'bot');
+    setChatInput('');
+    setTimeout(() => doResult(true), 750);
+  }
+  function doResult(first) {
+    if (!stats) return;
+    const seed = (birthSeed(chat.date, chat.hour) + chat.reroll * 0x9E3779B1) >>> 0;
+    const rng = mulberry32(seed);
+    const lucky = luckyNumbers(chat.date, chat.hour);
+    const w = personalWeights(buildWeights(stats, selectedMode), lucky);
+    const g = drawGame(w, currentOptions(), rng);
+    if (!g) { addMsg('앗, 고급 옵션의 제외수가 너무 많아요. 조건을 줄이고 다시 시도해주세요.', 'bot'); return; }
+    const gameBalls = g.six.map(n => cBall(n, lucky.includes(n))).join('') +
+      `<span class="plus" style="font-size:13px;">+</span>` +
+      `<span class="ball small locked bonus-ball" style="background:${ballColor(g.bonus)}">${g.bonus}</span>`;
+    const hb = bestHistory(g.six);
+    const hist = hb.best ? `역대최고 ${TIER_NAME[hb.best]} · ${hb.rounds[hb.rounds.length - 1].r}회` : '역대최고 없음';
+    const head = first
+      ? `분석 완료! ✨\n당신의 행운수는 <b>${lucky.join(', ')}</b> 예요.\n이 기운과 최근 통계를 섞은 추천 조합입니다:`
+      : `새로 뽑은 조합이에요:`;
+    addMsg(head, 'bot',
+      `<div class="mini-balls">${gameBalls}</div>` +
+      `<div style="font-size:11px;color:#99a;margin-top:6px;">${hist} · 파란 테두리 = 행운수</div>`);
+    setChatInput('<button id="cMore">🎲 다른 조합</button><button class="alt" id="cRestart">처음부터</button>');
+    document.getElementById('cMore').onclick = () => { chat.reroll++; doResult(false); };
+    document.getElementById('cRestart').onclick = () => { chat.date = null; chat.hour = -1; askDate(); };
+  }
+
+  document.getElementById('chatFab').addEventListener('click', () => {
+    const win = document.getElementById('chatWin');
+    win.hidden = false;
+    document.getElementById('chatFab').style.display = 'none';
+    if (!chat.started) { chat.started = true; chatStart(); }
+  });
+  document.getElementById('chatClose').addEventListener('click', () => {
+    document.getElementById('chatWin').hidden = true;
+    document.getElementById('chatFab').style.display = '';
   });
 
   // ===================== 초기화 =====================
