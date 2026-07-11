@@ -781,27 +781,83 @@
     addMsg('안녕하세요! 🔮\n생년월일과 태어난 시간을 알려주시면, 사주 기운과 과거 당첨 통계를 함께 풀어 행운번호를 추천해드려요.\n(운세는 재미로만 즐겨주세요 😊 당첨 확률과는 무관해요.)', 'bot');
     askDate();
   }
+  // 자연어 날짜/시간 파서
+  function parseDate(text) {
+    let m = text.match(/(\d{4})\s*[년.\-\/]\s*(\d{1,2})\s*[월.\-\/]\s*(\d{1,2})/);
+    if (!m) m = text.match(/(\d{4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if (!m) { const d8 = text.match(/\b(\d{4})(\d{2})(\d{2})\b/); if (d8) m = d8; }
+    if (!m) return null;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    if (y < 1900 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return { date: `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, matchStr: m[0] };
+  }
+  function parseTime(text) {
+    if (/모름|몰라|모르|글쎄|없|unknown/i.test(text)) return { unknown: true };
+    const isPM = /오후|pm/i.test(text), isAM = /오전|am/i.test(text);
+    let m = text.match(/(\d{1,2})\s*[:시]/);
+    if (!m) m = text.match(/(\d{1,2})/);
+    if (!m) return null;
+    let h = +m[1];
+    if (isPM && h < 12) h += 12;
+    if (isAM && h === 12) h = 0;
+    if (h < 0 || h > 23) return null;
+    return { hour: h };
+  }
+
   function askDate() {
-    addMsg('먼저, 생년월일을 알려주세요.', 'bot');
-    setChatInput('<input type="date" id="cDate"><button id="cDateOk">확인</button>');
-    document.getElementById('cDateOk').onclick = () => {
-      const v = document.getElementById('cDate').value;
-      if (!v) { document.getElementById('cDate').focus(); return; }
+    addMsg('생년월일을 알려주세요. 이렇게 입력해도 돼요 👇\n· 1990-05-15\n· 1990년 5월 15일\n· 19900515', 'bot');
+    showDateInput();
+  }
+  function showDateInput() {
+    setChatInput('<input type="text" id="cDate" placeholder="예: 1990-05-15" autocomplete="off"><button id="cDateOk">확인</button><button class="alt" id="cDatePick" title="달력으로 입력">📅</button>');
+    const input = document.getElementById('cDate');
+    const submit = () => handleDateText(input.value);
+    document.getElementById('cDateOk').onclick = submit;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+    document.getElementById('cDatePick').onclick = showDatePicker;
+    input.focus();
+  }
+  function showDatePicker() {
+    setChatInput('<input type="date" id="cDateP"><button id="cDatePOk">확인</button><button class="alt" id="cDateBack" title="직접 입력">⌨️</button>');
+    document.getElementById('cDatePOk').onclick = () => {
+      const v = document.getElementById('cDateP').value;
+      if (!v) { document.getElementById('cDateP').focus(); return; }
       chat.date = v; addMsg(v.replace(/-/g, '. '), 'user'); askTime();
     };
+    document.getElementById('cDateBack').onclick = showDateInput;
   }
+  function handleDateText(v) {
+    v = (v || '').trim(); if (!v) return;
+    const p = parseDate(v);
+    addMsg(escHtml(v), 'user');
+    if (!p) { addMsg('앗, 날짜를 못 알아들었어요. 예: 1990-05-15 또는 1990년 5월 15일 형식으로 입력해 주세요.', 'bot'); return; }
+    chat.date = p.date;
+    // 같은 문장에 시간까지 들어 있으면 바로 진행
+    const tp = parseTime(v.replace(p.matchStr, ''));
+    if (tp) { chat.hour = tp.unknown ? -1 : tp.hour; reading(true); return; }
+    askTime();
+  }
+
   function askTime() {
-    addMsg('태어난 시간도 알려주시면 더 정교해요. 모르면 "모름"을 눌러주세요.', 'bot');
-    let opts = '<option value="-1">시간 선택</option>';
-    for (let h = 0; h < 24; h++) opts += `<option value="${h}">${String(h).padStart(2, '0')}시</option>`;
-    setChatInput(`<select id="cTime">${opts}</select><button id="cTimeOk">확인</button><button class="alt" id="cTimeUnknown">모름</button>`);
-    document.getElementById('cTimeOk').onclick = () => {
-      const h = parseInt(document.getElementById('cTime').value, 10);
-      chat.hour = (h >= 0 && h <= 23) ? h : -1;
-      addMsg(chat.hour >= 0 ? `${String(chat.hour).padStart(2, '0')}시` : '모름', 'user');
-      reading(true);
-    };
+    addMsg('태어난 시간도 알려주세요. "14시", "오후 2시", "모름" 처럼 입력하면 돼요.', 'bot');
+    showTimeInput();
+  }
+  function showTimeInput() {
+    setChatInput('<input type="text" id="cTime" placeholder="예: 14시 / 오후 2시 / 모름" autocomplete="off"><button id="cTimeOk">확인</button><button class="alt" id="cTimeUnknown">모름</button>');
+    const input = document.getElementById('cTime');
+    const submit = () => handleTimeText(input.value);
+    document.getElementById('cTimeOk').onclick = submit;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
     document.getElementById('cTimeUnknown').onclick = () => { chat.hour = -1; addMsg('모름', 'user'); reading(true); };
+    input.focus();
+  }
+  function handleTimeText(v) {
+    v = (v || '').trim(); if (!v) return;
+    const tp = parseTime(v);
+    addMsg(escHtml(v), 'user');
+    if (!tp) { addMsg('시간을 못 알아들었어요. 예: 14시, 오후 2시, 모름 처럼 입력해 주세요.', 'bot'); return; }
+    chat.hour = tp.unknown ? -1 : tp.hour;
+    reading(true);
   }
 
   // 생일/시간 확보 후 첫 리딩
